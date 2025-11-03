@@ -285,29 +285,39 @@ server <- function(input, output, session) {
   # Robust DT edits: map visible col index -> name, numeric only
   observeEvent(input$tr1_table_cell_edit, {
     info <- input$tr1_table_cell_edit
-    if (is.null(info$col) || info$col == 0) return()
-    col_name <- colnames(tr_tables$tr1)[info$col]
+    # DT's col index is 0-based when rownames = FALSE
+    if (is.null(info$col)) return()
+    col_idx <- as.integer(info$col) + 1
+    if (col_idx < 1 || col_idx > ncol(tr_tables$tr1)) return()
+    col_name <- colnames(tr_tables$tr1)[col_idx]
     val <- suppressWarnings(as.numeric(info$value)); if (is.na(val)) return()
     if (col_name %in% c("day","tempC","c2h4")) {
-      tr_tables$tr1[info$row, col_name] <- val; proxy_update("tr1_table", tr_tables$tr1)
+      tr_tables$tr1[info$row, col_name] <- val
+      proxy_update("tr1_table", tr_tables$tr1)
     }
   })
   observeEvent(input$tr2_table_cell_edit, {
     info <- input$tr2_table_cell_edit
-    if (is.null(info$col) || info$col == 0) return()
-    col_name <- colnames(tr_tables$tr2)[info$col]
+    if (is.null(info$col)) return()
+    col_idx <- as.integer(info$col) + 1
+    if (col_idx < 1 || col_idx > ncol(tr_tables$tr2)) return()
+    col_name <- colnames(tr_tables$tr2)[col_idx]
     val <- suppressWarnings(as.numeric(info$value)); if (is.na(val)) return()
     if (col_name %in% c("day","tempC","c2h4")) {
-      tr_tables$tr2[info$row, col_name] <- val; proxy_update("tr2_table", tr_tables$tr2)
+      tr_tables$tr2[info$row, col_name] <- val
+      proxy_update("tr2_table", tr_tables$tr2)
     }
   })
   observeEvent(input$tr3_table_cell_edit, {
     info <- input$tr3_table_cell_edit
-    if (is.null(info$col) || info$col == 0) return()
-    col_name <- colnames(tr_tables$tr3)[info$col]
+    if (is.null(info$col)) return()
+    col_idx <- as.integer(info$col) + 1
+    if (col_idx < 1 || col_idx > ncol(tr_tables$tr3)) return()
+    col_name <- colnames(tr_tables$tr3)[col_idx]
     val <- suppressWarnings(as.numeric(info$value)); if (is.na(val)) return()
     if (col_name %in% c("day","tempC","c2h4")) {
-      tr_tables$tr3[info$row, col_name] <- val; proxy_update("tr3_table", tr_tables$tr3)
+      tr_tables$tr3[info$row, col_name] <- val
+      proxy_update("tr3_table", tr_tables$tr3)
     }
   })
   
