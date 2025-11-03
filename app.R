@@ -120,26 +120,22 @@ run_montecarlo_firmness <- function(params_df, treatments, variety = "Green",
   # Helper to build interpolation functions for a profile
   make_env_funs <- function(profile_df) {
     # Expect columns: day (numeric), tempC (numeric), c2h4 (numeric)
-    profile_df <- profile_df %>% mutate(across(everything(), as.numeric)) %>% drop_na(day, tempC, c2h4)
     profile_df <- arrange(profile_df, day)
-    
-    # Enforce minimum of two rows: start at day 0 and a final day
-    if (nrow(profile_df) < 2) {
-      stop("Each treatment must have at least two rows: a start (day 0) and a final day.")
-    }
+    # Enforce first day == 0
     if (profile_df$day[1] != 0) {
       profile_df <- bind_rows(tibble(day = 0,
                                      tempC = profile_df$tempC[1],
                                      c2h4 = profile_df$c2h4[1]),
                               profile_df)
     }
-    # Collapse duplicate days by averaging
-    profile_df <- profile_df %>% group_by(day) %>% summarise(tempC = mean(tempC), c2h4 = mean(c2h4), .groups = 'drop')
-    
+    # Last day is explicit in input, used as t_end
     t_end <- max(profile_df$day)
     
-    temp_fun <- stats::approxfun(profile_df$day, profile_df$tempC, method = "linear", rule = 2, ties = mean)
-    c2h4_fun <- stats::approxfun(profile_df$day, profile_df$c2h4, method = "linear", rule = 2, ties = mean)
+    # Build linear interpolation functions
+    temp_fun <- stats::approxfun(profile_df$day, profile_df$tempC, method = "linear",
+                                 rule = 2, ties = mean)
+    c2h4_fun <- stats::approxfun(profile_df$day, profile_df$c2h4, method = "linear",
+                                 rule = 2, ties = mean)
     list(temp_fun = temp_fun, c2h4_fun = c2h4_fun, t_end = t_end)
   }
   
@@ -220,48 +216,21 @@ ui <- fluidPage(
                  helpText("Place: para_fast.xlsx, para_med.xlsx, para_slow.xlsx in the folder below. Sheet 1 = Green, Sheet 2 = Gold."),
                  textInput("param_dir", "Parameter folder", value = "./params"),
                  hr(),
-                 h4("Treatments (stepwise profiles)") ,
-                 helpText("Define step changes per treatment. Minimum two rows (start @ day 0 and a final day). You can add intermediate steps."),
-                 selectInput("treat_count", "Number of treatments", choices = c(1,2,3), selected = 1),
+                 h4("Treatments (stepwise profiles)"),
+                 helpText("Define one treatment per tab. For each, enter rows with Day, Temp(°C), C2H4 (ppb). Ensure a row at Day 0 and a final Day."),
                  tabsetPanel(id = "tr_tabs",
                              tabPanel("Treatment 1",
                                       textInput("tr1_name", "Treatment name", value = "T1"),
-                                      fluidRow(
-                                        column(8, DTOutput("tr1_table")),
-                                        column(4,
-                                               br(),
-                                               actionButton("tr1_add", "+ Add row"),
-                                               actionButton("tr1_del", "− Delete last"),
-                                               helpText("Keep at least two rows (start & final).")
-                                        )
-                                      )
+                                      DTOutput("tr1_table")
                              ),
-                             conditionalPanel("input.treat_count >= 2",
-                                              tabPanel("Treatment 2",
-                                                       textInput("tr2_name", "Treatment name", value = "T2"),
-                                                       fluidRow(
-                                                         column(8, DTOutput("tr2_table")),
-                                                         column(4,
-                                                                br(),
-                                                                actionButton("tr2_add", "+ Add row"),
-                                                                actionButton("tr2_del", "− Delete last"),
-                                                                helpText("Keep at least two rows (start & final).")
-                                                         )
-                                                       )
-                                              )),
-                             conditionalPanel("input.treat_count >= 3",
-                                              tabPanel("Treatment 3",
-                                                       textInput("tr3_name", "Treatment name", value = "T3"),
-                                                       fluidRow(
-                                                         column(8, DTOutput("tr3_table")),
-                                                         column(4,
-                                                                br(),
-                                                                actionButton("tr3_add", "+ Add row"),
-                                                                actionButton("tr3_del", "− Delete last"),
-                                                                helpText("Keep at least two rows (start & final).")
-                                                         )
-                                                       )
-                                              ))
+                             tabPanel("Treatment 2",
+                                      textInput("tr2_name", "Treatment name", value = "T2"),
+                                      DTOutput("tr2_table")
+                             ),
+                             tabPanel("Treatment 3",
+                                      textInput("tr3_name", "Treatment name", value = "T3"),
+                                      DTOutput("tr3_table")
+                             )
                  ),
                  br(),
                  actionButton("run", "Run Simulation", class = "btn btn-primary"),
@@ -281,11 +250,11 @@ ui <- fluidPage(
 server <- function(input, output, session) {
   # Example starter tables
   starter_profile <- function(last_day = 12, t1 = 10, t2 = 5, t3 = 0, c1 = 10, c2 = 10, c3 = 10) {
-    # Minimal two rows: start @ 0d and final @ last_day; with optional intermediate steps
+    # Example: 0d at 10°C & 10ppb → 5d at 5°C → 10d at 0°C → 12d hold 0°C
     tibble(
-      day   = c(0, 5, 10, last_day),
+      day = c(0, 5, 10, last_day),
       tempC = c(t1, t2, t3, t3),
-      c2h4  = c(c1, c2, c3, c3)
+      c2h4 = c(c1, c2, c3, c3)
     )
   }
   
@@ -306,49 +275,23 @@ server <- function(input, output, session) {
   render_tr_dt("tr2_table", "tr2")
   render_tr_dt("tr3_table", "tr3")
   
-  # Row add/delete helpers
-  add_row <- function(df) {
-    if (nrow(df) < 1) return(tibble(day = 0, tempC = 0, c2h4 = 0))
-    last <- tail(df, 1)
-    bind_rows(df, tibble(day = last$day + 1, tempC = last$tempC, c2h4 = last$c2h4))
-  }
-  del_row <- function(df) {
-    if (nrow(df) <= 2) return(df) else return(df[-nrow(df), ])
-  }
-  
-  observeEvent(input$tr1_add, { tr_tables$tr1 <- add_row(tr_tables$tr1); proxy_update("tr1_table", tr_tables$tr1) })
-  observeEvent(input$tr1_del, { tr_tables$tr1 <- del_row(tr_tables$tr1); proxy_update("tr1_table", tr_tables$tr1) })
-  observeEvent(input$tr2_add, { tr_tables$tr2 <- add_row(tr_tables$tr2); proxy_update("tr2_table", tr_tables$tr2) })
-  observeEvent(input$tr2_del, { tr_tables$tr2 <- del_row(tr_tables$tr2); proxy_update("tr2_table", tr_tables$tr2) })
-  observeEvent(input$tr3_add, { tr_tables$tr3 <- add_row(tr_tables$tr3); proxy_update("tr3_table", tr_tables$tr3) })
-  observeEvent(input$tr3_del, { tr_tables$tr3 <- del_row(tr_tables$tr3); proxy_update("tr3_table", tr_tables$tr3) })
-  
   proxy_update <- function(id, data) {
     replaceData(dataTableProxy(id), data, resetPaging = FALSE, rownames = FALSE)
   }
   
   observeEvent(input$tr1_table_cell_edit, {
     info <- input$tr1_table_cell_edit
-    if (is.null(info$col) || info$col == 0) return()
-    val <- suppressWarnings(as.numeric(info$value))
-    if (is.na(val)) return()
-    tr_tables$tr1[info$row, info$col] <- val
+    tr_tables$tr1[info$row, info$col] <- as.numeric(info$value)
     proxy_update("tr1_table", tr_tables$tr1)
   })
   observeEvent(input$tr2_table_cell_edit, {
     info <- input$tr2_table_cell_edit
-    if (is.null(info$col) || info$col == 0) return()
-    val <- suppressWarnings(as.numeric(info$value))
-    if (is.na(val)) return()
-    tr_tables$tr2[info$row, info$col] <- val
+    tr_tables$tr2[info$row, info$col] <- as.numeric(info$value)
     proxy_update("tr2_table", tr_tables$tr2)
   })
   observeEvent(input$tr3_table_cell_edit, {
     info <- input$tr3_table_cell_edit
-    if (is.null(info$col) || info$col == 0) return()
-    val <- suppressWarnings(as.numeric(info$value))
-    if (is.na(val)) return()
-    tr_tables$tr3[info$row, info$col] <- val
+    tr_tables$tr3[info$row, info$col] <- as.numeric(info$value)
     proxy_update("tr3_table", tr_tables$tr3)
   })
   
@@ -381,9 +324,11 @@ server <- function(input, output, session) {
     params_df <- params_all[idx, c("E0", "F0", "Ffix1")] %>% as.data.frame()
     
     # Build treatments list from UI
-    tr_list <- list(list(name = input$tr1_name, profile_df = tr_tables$tr1))
-    if (input$treat_count >= 2) tr_list[[length(tr_list) + 1]] <- list(name = input$tr2_name, profile_df = tr_tables$tr2)
-    if (input$treat_count >= 3) tr_list[[length(tr_list) + 1]] <- list(name = input$tr3_name, profile_df = tr_tables$tr3)
+    treatments <- list(
+      list(name = input$tr1_name, profile_df = tr_tables$tr1),
+      list(name = input$tr2_name, profile_df = tr_tables$tr2),
+      list(name = input$tr3_name, profile_df = tr_tables$tr3)
+    )
     
     run_montecarlo_firmness(
       params_df = params_df,
