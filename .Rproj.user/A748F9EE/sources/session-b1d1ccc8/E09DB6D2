@@ -1,0 +1,26 @@
+{
+    "id": "E09DB6D2",
+    "path": "~/Data-analytics/kiwi-softening/app.R",
+    "project_path": "app.R",
+    "type": "r_source",
+    "hash": "2871480577",
+    "contents": "",
+    "dirty": false,
+    "created": 1762127827512.0,
+    "source_on_save": false,
+    "relative_order": 1,
+    "properties": {
+        "source_window_id": "",
+        "Source": "Source",
+        "cursorPosition": "435,0",
+        "scrollLine": "415"
+    },
+    "folds": "",
+    "lastKnownWriteTime": 1762131594,
+    "encoding": "UTF-8",
+    "collab_server": "",
+    "source_window": "",
+    "last_content_update": 1762131594719,
+    "read_only": false,
+    "read_only_alternatives": []
+}
