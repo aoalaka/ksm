@@ -1,8 +1,11 @@
-# Kiwifruit Softening Monte Carlo — Shiny R App (updated)
+# Kiwifruit Softening Monte Carlo — Shiny R App (clean v1.0.0)
 # -----------------------------------------------------------------
-# Full rewrite with robust DT editing, 1–3 treatments, add/delete rows,
-# minimal 2-row profiles (Reset), and faithful MATLAB model port.
-# Parameter files expected in ./params (sheet 1 = Green, sheet 2 = Gold).
+# - Dynamic treatment tabs (1–3), no stacking
+# - Built-in params folder (works on shinyapps.io)
+# - DT cell editing fixed (0-based -> 1-based)
+# - Per-row delete button (first two rows protected)
+# - Progress bar during simulation
+# - Human-readable summary table
 # -----------------------------------------------------------------
 
 suppressPackageStartupMessages({
@@ -81,7 +84,7 @@ run_montecarlo_firmness <- function(params_df, treatments, variety = "Green",
   }
   
   make_env_funs <- function(profile_df) {
-    profile_df <- profile_df %>% mutate(across(everything(), as.numeric)) %>% drop_na(day, tempC, c2h4)
+    profile_df <- profile_df %>% mutate(across(everything(), as.numeric)) %>% tidyr::drop_na(day, tempC, c2h4)
     profile_df <- arrange(profile_df, day)
     if (nrow(profile_df) < 2) stop("Each treatment needs ≥ 2 rows: day 0 and a final day.")
     if (profile_df$day[1] != 0) {
@@ -112,7 +115,7 @@ run_montecarlo_firmness <- function(params_df, treatments, variety = "Green",
     
     all_trajs[[tr_name]] <- trajs
     final_day <- max(trajs$time)
-    last_rows <- filter(trajs, time == final_day)
+    last_rows <- dplyr::filter(trajs, time == final_day)
     pct_le_0_8 <- mean(last_rows$firmness <= 0.8) * 100
     summaries[[tr_name]] <- tibble(
       treatment = tr_name,
@@ -129,7 +132,8 @@ run_montecarlo_firmness <- function(params_df, treatments, variety = "Green",
 # --------------------------- Shiny UI ---------------------------
 ui <- fluidPage(
   theme = bs_theme(version = 5, bootswatch = "flatly"),
-  titlePanel("Kiwifruit Softening Monte Carlo (R / Shiny)"),
+  tags$head(tags$link(rel = "stylesheet", href = "https://cdn.jsdelivr.net/npm/bootstrap-icons@1.11.3/font/bootstrap-icons.css")),
+  titlePanel("Kiwifruit Firmness Simulation Dashboard"),
   sidebarLayout(
     sidebarPanel(width = 4,
                  h4("Model & Data"),
@@ -142,13 +146,11 @@ ui <- fluidPage(
                    column(6, numericInput("std_n", "Target SD F0", value = 1, step = 0.1))
                  ),
                  hr(),
-                 h4("Parameter files"),
-                 helpText("Place para_fast.xlsx, para_med.xlsx, para_slow.xlsx in this folder. Sheet 1 = Green, Sheet 2 = Gold."),
-                 textInput("param_dir", "Parameter folder", value = "./params"),
+                 h4("Parameters"),
+                 helpText("The app ships with built-in parameter banks under ./params (Sheet 1 = Green, Sheet 2 = Gold)."),
                  hr(),
                  h4("Treatments (stepwise profiles)"),
-                 helpText("Minimum two rows per treatment (start @ day 0 and a final day). Add intermediate steps as needed. 
-Tip: → Double-click a cell to edit; use +/− to add or remove rows."),
+                 helpText("Minimum two rows per treatment (start @ day 0 and a final day). Double-click a cell to edit. Use the bin icon to delete rows (first two rows cannot be deleted)."),
                  selectInput("treat_count", "Number of treatments", choices = c(1,2,3), selected = 1),
                  uiOutput("treat_tabs"),
                  br(),
@@ -157,7 +159,7 @@ Tip: → Double-click a cell to edit; use +/− to add or remove rows."),
                  downloadButton("download_csv", "Download CSV results")
     ),
     mainPanel(width = 8,
-              h4("Monte Carlo Firmness — Faceted by Treatment"),
+              h4("Simulated Firmness — by Treatment"),
               plotOutput("mc_plot", height = "560px"),
               hr(),
               h4("Summary at Final Day"),
@@ -168,10 +170,7 @@ Tip: → Double-click a cell to edit; use +/− to add or remove rows."),
 
 # -------------------------- Shiny Server --------------------------
 server <- function(input, output, session) {
-  # Minimal profile builder
-  minimal_profile <- function(final_day, start_temp, start_c2h4, final_temp, final_c2h4) {
-    tibble(day = c(0, final_day), tempC = c(start_temp, final_temp), c2h4 = c(start_c2h4, final_c2h4))
-  }
+  # starter profiles (editable in UI)
   starter_profile <- function(last_day = 12, t1 = 10, t2 = 5, t3 = 0, c1 = 10, c2 = 10, c3 = 10) {
     tibble(day = c(0, 5, 10, last_day), tempC = c(t1, t2, t3, t3), c2h4 = c(c1, c2, c3, c3))
   }
@@ -182,26 +181,35 @@ server <- function(input, output, session) {
     tr3 = starter_profile(last_day = 7, t1 = 5, t2 = 5, t3 = 5)
   )
   
-  # Enhanced DT render: add per-row delete button; no paging; clean layout
+  # DT proxy updater
+  proxy_update <- function(id, data) {
+    replaceData(dataTableProxy(id), data %>% mutate(`Delete` = NULL), resetPaging = FALSE, rownames = FALSE)
+  }
+  
+  # Enhanced DT render: per-row delete button; hide on first two rows
   render_tr_dt <- function(id, rv_name, del_input) {
     output[[id]] <- renderDT({
       df <- tr_tables[[rv_name]]
-      df_disp <- df %>%
-        mutate(`Delete` = sprintf(
-          '<button class="btn btn-sm btn-link text-danger delete_btn" title="Delete row">&#128465;</button>'
-        ))
+      if (nrow(df) < 2) {
+        df <- tibble(day = c(0, 1), tempC = c(0, 0), c2h4 = c(0, 0))
+        tr_tables[[rv_name]] <<- df
+      }
+      df_disp <- df %>% mutate(`Delete` = ifelse(dplyr::row_number() <= 2,
+                                                 '<button class="btn btn-sm btn-light" title="Cannot delete first two rows" disabled><i class="bi bi-trash3"></i></button>',
+                                                 '<button class="btn btn-sm btn-link text-danger delete_btn" title="Delete row"><i class="bi bi-trash3"></i></button>'
+      ))
       datatable(
         df_disp,
         editable = list(target = "cell"),
         rownames = FALSE,
         selection = 'none',
-        escape = FALSE,      # allow HTML in Delete column
+        escape = FALSE,
         options = list(dom = 't', paging = FALSE, ordering = FALSE),
         callback = JS(sprintf(
           "table.on('click', 'button.delete_btn', function(){
-           var idx = table.row($(this).closest('tr')).index() + 1;  // 1-based for R
-           Shiny.setInputValue('%s', idx, {priority:'event'});
-         });",
+   var idx = table.row($(this).closest('tr')).index() + 1;
+   Shiny.setInputValue('%s', idx, {priority:'event'});
+});",
           del_input
         ))
       )
@@ -212,44 +220,29 @@ server <- function(input, output, session) {
   render_tr_dt("tr2_table", "tr2", "tr2_delete_row")
   render_tr_dt("tr3_table", "tr3", "tr3_delete_row")
   
-  
-  proxy_update <- function(id, data) {
-    replaceData(dataTableProxy(id), data, resetPaging = FALSE, rownames = FALSE)
-  }
-  
-  # Add / delete row helpers (never below 2 rows)
-  add_row <- function(df) {
-    if (nrow(df) < 1) return(tibble(day = 0, tempC = 0, c2h4 = 0))
-    last <- tail(df, 1)
-    bind_rows(df, tibble(day = as.numeric(last$day) + 1, tempC = as.numeric(last$tempC), c2h4 = as.numeric(last$c2h4)))
-  }
-  del_row <- function(df) { if (nrow(df) <= 2) df else df[-nrow(df), ] }
-  
-  observeEvent(input$tr1_add, { tr_tables$tr1 <- add_row(tr_tables$tr1); proxy_update("tr1_table", tr_tables$tr1) })
-  observeEvent(input$tr1_del, { tr_tables$tr1 <- del_row(tr_tables$tr1); proxy_update("tr1_table", tr_tables$tr1) })
-  observeEvent(input$tr2_add, { tr_tables$tr2 <- add_row(tr_tables$tr2); proxy_update("tr2_table", tr_tables$tr2) })
-  observeEvent(input$tr2_del, { tr_tables$tr2 <- del_row(tr_tables$tr2); proxy_update("tr2_table", tr_tables$tr2) })
-  observeEvent(input$tr3_add, { tr_tables$tr3 <- add_row(tr_tables$tr3); proxy_update("tr3_table", tr_tables$tr3) })
-  observeEvent(input$tr3_del, { tr_tables$tr3 <- del_row(tr_tables$tr3); proxy_update("tr3_table", tr_tables$tr3) })
-  
-  # Minimal 2-row resets using quick-setup inputs
-  observeEvent(input$tr1_reset2, {
-    tr_tables$tr1 <- minimal_profile(input$tr1_final_day, input$tr1_start_temp, input$tr1_start_c2h4, input$tr1_final_temp, input$tr1_final_c2h4)
-    proxy_update("tr1_table", tr_tables$tr1)
-  })
-  observeEvent(input$tr2_reset2, {
-    tr_tables$tr2 <- minimal_profile(input$tr2_final_day, input$tr2_start_temp, input$tr2_start_c2h4, input$tr2_final_temp, input$tr2_final_c2h4)
-    proxy_update("tr2_table", tr_tables$tr2)
-  })
-  observeEvent(input$tr3_reset2, {
-    tr_tables$tr3 <- minimal_profile(input$tr3_final_day, input$tr3_start_temp, input$tr3_start_c2h4, input$tr3_final_temp, input$tr3_final_c2h4)
-    proxy_update("tr3_table", tr_tables$tr3)
+  # Dynamic tabs (no stacking)
+  output$treat_tabs <- renderUI({
+    tabs <- list(
+      tabPanel("Treatment 1",
+               textInput("tr1_name", "Treatment name", value = "T1"),
+               DTOutput("tr1_table"))
+    )
+    if (input$treat_count >= 2) {
+      tabs[[length(tabs) + 1]] <- tabPanel("Treatment 2",
+                                           textInput("tr2_name", "Treatment name", value = "T2"),
+                                           DTOutput("tr2_table"))
+    }
+    if (input$treat_count >= 3) {
+      tabs[[length(tabs) + 1]] <- tabPanel("Treatment 3",
+                                           textInput("tr3_name", "Treatment name", value = "T3"),
+                                           DTOutput("tr3_table"))
+    }
+    do.call(tabsetPanel, c(list(id = "tr_tabs"), tabs))
   })
   
-  # Robust DT edits: map visible col index -> name, numeric only
+  # DT edit handlers (0-based -> 1-based col mapping)
   observeEvent(input$tr1_table_cell_edit, {
     info <- input$tr1_table_cell_edit
-    # DT's col index is 0-based when rownames = FALSE
     if (is.null(info$col)) return()
     col_idx <- as.integer(info$col) + 1
     if (col_idx < 1 || col_idx > ncol(tr_tables$tr1)) return()
@@ -285,41 +278,38 @@ server <- function(input, output, session) {
     }
   })
   
+  # Row delete events (keep >= 2 rows; don't delete first two)
   observeEvent(input$tr1_delete_row, {
     idx <- as.integer(input$tr1_delete_row)
-    if (!is.na(idx) && nrow(tr_tables$tr1) > 2) {
+    if (!is.na(idx) && nrow(tr_tables$tr1) > 2 && idx > 2) {
       tr_tables$tr1 <- tr_tables$tr1[-idx, , drop = FALSE]
       proxy_update("tr1_table", tr_tables$tr1)
     }
   })
-  
   observeEvent(input$tr2_delete_row, {
     idx <- as.integer(input$tr2_delete_row)
-    if (!is.na(idx) && nrow(tr_tables$tr2) > 2) {
+    if (!is.na(idx) && nrow(tr_tables$tr2) > 2 && idx > 2) {
       tr_tables$tr2 <- tr_tables$tr2[-idx, , drop = FALSE]
       proxy_update("tr2_table", tr_tables$tr2)
     }
   })
-  
   observeEvent(input$tr3_delete_row, {
     idx <- as.integer(input$tr3_delete_row)
-    if (!is.na(idx) && nrow(tr_tables$tr3) > 2) {
+    if (!is.na(idx) && nrow(tr_tables$tr3) > 2 && idx > 2) {
       tr_tables$tr3 <- tr_tables$tr3[-idx, , drop = FALSE]
       proxy_update("tr3_table", tr_tables$tr3)
     }
   })
   
-  
-
-  # Load parameters from Excel based on variety & softening type
+  # Load parameters from Excel based on variety & softening type (fixed path)
   load_params <- reactive({
-    req(dir.exists(input$param_dir))
+    params_dir <- file.path(getwd(), "params")
+    validate(need(dir.exists(params_dir), sprintf("Missing params folder: %s", params_dir)))
     fn <- switch(input$softening,
                  "fast softening" = "para_fast.xlsx",
                  "average softening" = "para_med.xlsx",
-                 "slow softening" = "para_slow.xlsx"
-    )
-    path <- file.path(input$param_dir, fn)
+                 "slow softening" = "para_slow.xlsx")
+    path <- file.path(params_dir, fn)
     validate(need(file.exists(path), paste0("File not found: ", path)))
     sheet_id <- ifelse(input$variety == "Green", 1, 2)
     df <- readxl::read_excel(path, sheet = sheet_id, col_names = FALSE)
@@ -327,20 +317,19 @@ server <- function(input, output, session) {
     df
   })
   
-  # Run simulation
+  # Run simulation with progress bar
   sim_result <- eventReactive(input$run, {
     withProgress(message = "Simulating firmness...", value = 0, {
       params_all <- load_params()
       N <- as.integer(input$mc_n); validate(need(N > 0, "Replicates must be > 0"))
-      N_eff <- min(N, nrow(params_all))
-      incProgress(0.05)
+      N_eff <- min(N, nrow(params_all)); incProgress(0.05)
       idx <- sample(seq_len(nrow(params_all)), N_eff, replace = FALSE)
       params_df <- params_all[idx, c("E0", "F0", "Ffix1")] %>% as.data.frame()
       
       # Build treatments list per treat_count
       tr_list <- list(list(name = input$tr1_name, profile_df = tr_tables$tr1))
-      if (input$treat_count >= 2) tr_list[[length(tr_list)+1]] <- list(name = input$tr2_name, profile_df = tr_tables$tr2)
-      if (input$treat_count >= 3) tr_list[[length(tr_list)+1]] <- list(name = input$tr3_name, profile_df = tr_tables$tr3)
+      if (input$treat_count >= 2) tr_list[[length(tr_list) + 1]] <- list(name = input$tr2_name, profile_df = tr_tables$tr2)
+      if (input$treat_count >= 3) tr_list[[length(tr_list) + 1]] <- list(name = input$tr3_name, profile_df = tr_tables$tr3)
       
       incProgress(0.2)
       res <- run_montecarlo_firmness(
@@ -357,26 +346,6 @@ server <- function(input, output, session) {
     })
   })
   
-  output$treat_tabs <- renderUI({
-    tabs <- list(
-      tabPanel("Treatment 1",
-               textInput("tr1_name", "Treatment name", value = "T1"),
-               DTOutput("tr1_table"))
-    )
-    if (input$treat_count >= 2) {
-      tabs[[length(tabs) + 1]] <- tabPanel("Treatment 2",
-                                           textInput("tr2_name", "Treatment name", value = "T2"),
-                                           DTOutput("tr2_table"))
-    }
-    if (input$treat_count >= 3) {
-      tabs[[length(tabs) + 1]] <- tabPanel("Treatment 3",
-                                           textInput("tr3_name", "Treatment name", value = "T3"),
-                                           DTOutput("tr3_table"))
-    }
-    do.call(tabsetPanel, c(list(id = "tr_tabs"), tabs))
-  })
-  
-  
   # Plot
   output$mc_plot <- renderPlot({
     res <- sim_result(); req(res$trajectories)
@@ -385,12 +354,12 @@ server <- function(input, output, session) {
     ggplot(df, aes(x = time, y = firmness, group = replicate)) +
       geom_line(alpha = 0.08, linewidth = 0.4, colour = "grey30") +
       geom_line(data = avg_df, aes(x = time, y = mean_f, group = NULL), linewidth = 1.2) +
-      facet_wrap(~ treatment, scales = "free_y") +
+      facet_wrap(~ treatment) +
       labs(x = "Time (days)", y = "Firmness (kgf)", subtitle = "Grey = individual fruit replicates; Solid = average firmness") +
       theme_minimal(base_size = 13) + theme(panel.grid.minor = element_blank())
   })
   
-  # Summary table
+  # Summary table (human-readable)
   output$summary_table <- renderDT({
     res <- sim_result()
     nice <- res$summary %>%
