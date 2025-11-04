@@ -16,6 +16,7 @@ suppressPackageStartupMessages({
   library(DT)
   library(stringr)
   library(readr)
+  library(bslib)
 })
 
 # ---------------- Arrhenius helper (karr.m) ----------------
@@ -127,6 +128,7 @@ run_montecarlo_firmness <- function(params_df, treatments, variety = "Green",
 
 # --------------------------- Shiny UI ---------------------------
 ui <- fluidPage(
+  theme = bs_theme(version = 5, bootswatch = "flatly"),
   titlePanel("Kiwifruit Softening Monte Carlo (R / Shiny)"),
   sidebarLayout(
     sidebarPanel(width = 4,
@@ -145,71 +147,10 @@ ui <- fluidPage(
                  textInput("param_dir", "Parameter folder", value = "./params"),
                  hr(),
                  h4("Treatments (stepwise profiles)"),
-                 helpText("Minimum two rows per treatment (start @ day 0 and a final day). Add intermediate steps as needed."),
+                 helpText("Minimum two rows per treatment (start @ day 0 and a final day). Add intermediate steps as needed. 
+Tip: → Double-click a cell to edit; use +/− to add or remove rows."),
                  selectInput("treat_count", "Number of treatments", choices = c(1,2,3), selected = 1),
-                 tabsetPanel(id = "tr_tabs",
-                             tabPanel("Treatment 1",
-                                      textInput("tr1_name", "Treatment name", value = "T1"),
-                                      fluidRow(
-                                        column(8, DTOutput("tr1_table")),
-                                        column(4,
-                                               h5("Quick setup"),
-                                               numericInput("tr1_final_day", "Final day", value = 12, min = 1, step = 1),
-                                               numericInput("tr1_start_temp", "Start Temp (°C)", value = 10),
-                                               numericInput("tr1_start_c2h4", "Start C2H4 (ppb)", value = 10),
-                                               numericInput("tr1_final_temp", "Final Temp (°C)", value = 0),
-                                               numericInput("tr1_final_c2h4", "Final C2H4 (ppb)", value = 10),
-                                               actionButton("tr1_reset2", "Reset to minimal 2 rows"),
-                                               br(), br(),
-                                               actionButton("tr1_add", "+ Add row"),
-                                               actionButton("tr1_del", "− Delete last"),
-                                               helpText("Keep at least two rows (start & final).")
-                                        )
-                                      )
-                             ),
-                             conditionalPanel("input.treat_count >= 2",
-                                              tabPanel("Treatment 2",
-                                                       textInput("tr2_name", "Treatment name", value = "T2"),
-                                                       fluidRow(
-                                                         column(8, DTOutput("tr2_table")),
-                                                         column(4,
-                                                                h5("Quick setup"),
-                                                                numericInput("tr2_final_day", "Final day", value = 10, min = 1, step = 1),
-                                                                numericInput("tr2_start_temp", "Start Temp (°C)", value = 15),
-                                                                numericInput("tr2_start_c2h4", "Start C2H4 (ppb)", value = 10),
-                                                                numericInput("tr2_final_temp", "Final Temp (°C)", value = 2),
-                                                                numericInput("tr2_final_c2h4", "Final C2H4 (ppb)", value = 10),
-                                                                actionButton("tr2_reset2", "Reset to minimal 2 rows"),
-                                                                br(), br(),
-                                                                actionButton("tr2_add", "+ Add row"),
-                                                                actionButton("tr2_del", "− Delete last"),
-                                                                helpText("Keep at least two rows (start & final).")
-                                                         )
-                                                       )
-                                              )
-                             ),
-                             conditionalPanel("input.treat_count >= 3",
-                                              tabPanel("Treatment 3",
-                                                       textInput("tr3_name", "Treatment name", value = "T3"),
-                                                       fluidRow(
-                                                         column(8, DTOutput("tr3_table")),
-                                                         column(4,
-                                                                h5("Quick setup"),
-                                                                numericInput("tr3_final_day", "Final day", value = 7, min = 1, step = 1),
-                                                                numericInput("tr3_start_temp", "Start Temp (°C)", value = 5),
-                                                                numericInput("tr3_start_c2h4", "Start C2H4 (ppb)", value = 10),
-                                                                numericInput("tr3_final_temp", "Final Temp (°C)", value = 5),
-                                                                numericInput("tr3_final_c2h4", "Final C2H4 (ppb)", value = 10),
-                                                                actionButton("tr3_reset2", "Reset to minimal 2 rows"),
-                                                                br(), br(),
-                                                                actionButton("tr3_add", "+ Add row"),
-                                                                actionButton("tr3_del", "− Delete last"),
-                                                                helpText("Keep at least two rows (start & final).")
-                                                         )
-                                                       )
-                                              )
-                             )
-                 ),
+                 uiOutput("treat_tabs"),
                  br(),
                  actionButton("run", "Run Simulation", class = "btn btn-primary"),
                  br(), br(),
@@ -241,13 +182,36 @@ server <- function(input, output, session) {
     tr3 = starter_profile(last_day = 7, t1 = 5, t2 = 5, t3 = 5)
   )
   
-  render_tr_dt <- function(id, rv_name) {
+  # Enhanced DT render: add per-row delete button; no paging; clean layout
+  render_tr_dt <- function(id, rv_name, del_input) {
     output[[id]] <- renderDT({
-      datatable(tr_tables[[rv_name]], editable = TRUE, rownames = FALSE, selection = 'none',
-                options = list(dom = 'tip', pageLength = 5))
+      df <- tr_tables[[rv_name]]
+      df_disp <- df %>%
+        mutate(`Delete` = sprintf(
+          '<button class="btn btn-sm btn-link text-danger delete_btn" title="Delete row">&#128465;</button>'
+        ))
+      datatable(
+        df_disp,
+        editable = list(target = "cell"),
+        rownames = FALSE,
+        selection = 'none',
+        escape = FALSE,      # allow HTML in Delete column
+        options = list(dom = 't', paging = FALSE, ordering = FALSE),
+        callback = JS(sprintf(
+          "table.on('click', 'button.delete_btn', function(){
+           var idx = table.row($(this).closest('tr')).index() + 1;  // 1-based for R
+           Shiny.setInputValue('%s', idx, {priority:'event'});
+         });",
+          del_input
+        ))
+      )
     })
   }
-  render_tr_dt("tr1_table", "tr1"); render_tr_dt("tr2_table", "tr2"); render_tr_dt("tr3_table", "tr3")
+  
+  render_tr_dt("tr1_table", "tr1", "tr1_delete_row")
+  render_tr_dt("tr2_table", "tr2", "tr2_delete_row")
+  render_tr_dt("tr3_table", "tr3", "tr3_delete_row")
+  
   
   proxy_update <- function(id, data) {
     replaceData(dataTableProxy(id), data, resetPaging = FALSE, rownames = FALSE)
@@ -321,6 +285,32 @@ server <- function(input, output, session) {
     }
   })
   
+  observeEvent(input$tr1_delete_row, {
+    idx <- as.integer(input$tr1_delete_row)
+    if (!is.na(idx) && nrow(tr_tables$tr1) > 2) {
+      tr_tables$tr1 <- tr_tables$tr1[-idx, , drop = FALSE]
+      proxy_update("tr1_table", tr_tables$tr1)
+    }
+  })
+  
+  observeEvent(input$tr2_delete_row, {
+    idx <- as.integer(input$tr2_delete_row)
+    if (!is.na(idx) && nrow(tr_tables$tr2) > 2) {
+      tr_tables$tr2 <- tr_tables$tr2[-idx, , drop = FALSE]
+      proxy_update("tr2_table", tr_tables$tr2)
+    }
+  })
+  
+  observeEvent(input$tr3_delete_row, {
+    idx <- as.integer(input$tr3_delete_row)
+    if (!is.na(idx) && nrow(tr_tables$tr3) > 2) {
+      tr_tables$tr3 <- tr_tables$tr3[-idx, , drop = FALSE]
+      proxy_update("tr3_table", tr_tables$tr3)
+    }
+  })
+  
+  
+
   # Load parameters from Excel based on variety & softening type
   load_params <- reactive({
     req(dir.exists(input$param_dir))
@@ -339,27 +329,53 @@ server <- function(input, output, session) {
   
   # Run simulation
   sim_result <- eventReactive(input$run, {
-    params_all <- load_params()
-    N <- as.integer(input$mc_n); validate(need(N > 0, "Replicates must be > 0"))
-    N_eff <- min(N, nrow(params_all))
-    idx <- sample(seq_len(nrow(params_all)), N_eff, replace = FALSE)
-    params_df <- params_all[idx, c("E0", "F0", "Ffix1")] %>% as.data.frame()
-    
-    # Build treatments list per treat_count
-    tr_list <- list(list(name = input$tr1_name, profile_df = tr_tables$tr1))
-    if (input$treat_count >= 2) tr_list[[length(tr_list)+1]] <- list(name = input$tr2_name, profile_df = tr_tables$tr2)
-    if (input$treat_count >= 3) tr_list[[length(tr_list)+1]] <- list(name = input$tr3_name, profile_df = tr_tables$tr3)
-    
-    run_montecarlo_firmness(
-      params_df = params_df,
-      treatments = tr_list,
-      variety = input$variety,
-      use_init = isTRUE(input$use_init),
-      F_n = input$F_n,
-      std_n = input$std_n,
-      n_time_steps = 51
-    )
+    withProgress(message = "Simulating firmness...", value = 0, {
+      params_all <- load_params()
+      N <- as.integer(input$mc_n); validate(need(N > 0, "Replicates must be > 0"))
+      N_eff <- min(N, nrow(params_all))
+      incProgress(0.05)
+      idx <- sample(seq_len(nrow(params_all)), N_eff, replace = FALSE)
+      params_df <- params_all[idx, c("E0", "F0", "Ffix1")] %>% as.data.frame()
+      
+      # Build treatments list per treat_count
+      tr_list <- list(list(name = input$tr1_name, profile_df = tr_tables$tr1))
+      if (input$treat_count >= 2) tr_list[[length(tr_list)+1]] <- list(name = input$tr2_name, profile_df = tr_tables$tr2)
+      if (input$treat_count >= 3) tr_list[[length(tr_list)+1]] <- list(name = input$tr3_name, profile_df = tr_tables$tr3)
+      
+      incProgress(0.2)
+      res <- run_montecarlo_firmness(
+        params_df = params_df,
+        treatments = tr_list,
+        variety = input$variety,
+        use_init = isTRUE(input$use_init),
+        F_n = input$F_n,
+        std_n = input$std_n,
+        n_time_steps = 51
+      )
+      incProgress(0.75)
+      res
+    })
   })
+  
+  output$treat_tabs <- renderUI({
+    tabs <- list(
+      tabPanel("Treatment 1",
+               textInput("tr1_name", "Treatment name", value = "T1"),
+               DTOutput("tr1_table"))
+    )
+    if (input$treat_count >= 2) {
+      tabs[[length(tabs) + 1]] <- tabPanel("Treatment 2",
+                                           textInput("tr2_name", "Treatment name", value = "T2"),
+                                           DTOutput("tr2_table"))
+    }
+    if (input$treat_count >= 3) {
+      tabs[[length(tabs) + 1]] <- tabPanel("Treatment 3",
+                                           textInput("tr3_name", "Treatment name", value = "T3"),
+                                           DTOutput("tr3_table"))
+    }
+    do.call(tabsetPanel, c(list(id = "tr_tabs"), tabs))
+  })
+  
   
   # Plot
   output$mc_plot <- renderPlot({
@@ -376,7 +392,17 @@ server <- function(input, output, session) {
   
   # Summary table
   output$summary_table <- renderDT({
-    res <- sim_result(); datatable(res$summary, rownames = FALSE, options = list(dom = 'tip'))
+    res <- sim_result()
+    nice <- res$summary %>%
+      dplyr::rename(
+        `Treatment` = treatment,
+        `Final day (d)` = final_day,
+        `≤ 0.8 kgf (%)` = pct_firmness_le_0_8,
+        `Mean firmness at final day (kgf)` = mean_final_firmness,
+        `SD at final day` = sd_final_firmness,
+        `Replicates` = n
+      )
+    datatable(nice, rownames = FALSE, options = list(dom = 'tip', pageLength = 5))
   })
   
   # Download all trajectories (long format)
