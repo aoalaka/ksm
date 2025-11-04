@@ -139,16 +139,16 @@ ui <- fluidPage(
                  h4("Model & Data"),
                  radioButtons("variety", "Variety", choices = c("Green (HW)" = "Green", "Gold (GA)" = "Gold"), selected = "Green"),
                  selectInput("softening", "Softening type", choices = c("fast softening", "average softening", "slow softening"), selected = "average softening"),
-                 numericInput("mc_n", "Monte Carlo replicates", value = 1000, min = 10, max = 3000, step = 10),
+                 numericInput("mc_n", "Fruit Sample Size", value = 1000, min = 10, max = 3000, step = 10),
                  checkboxInput("use_init", "Use initial firmness distribution (recenter & rescale F0)", value = FALSE),
                  fluidRow(
-                   column(6, numericInput("F_n", "Target mean F0", value = 7, step = 0.1)),
-                   column(6, numericInput("std_n", "Target SD F0", value = 1, step = 0.1))
+                   column(6, numericInput("F_n", "Mean Initial Firmness (kgf)", value = 7, step = 0.1)),
+                   column(6, numericInput("std_n", "SD", value = 1, step = 0.1))
                  ),
-                 hr(),
-                 h4("Parameters"),
-                 helpText("The app ships with built-in parameter banks under ./params (Sheet 1 = Green, Sheet 2 = Gold)."),
-                 hr(),
+                 # hr(),
+                 # h4("Parameters"),
+                 # helpText("The app ships with built-in parameter banks under ./params (Sheet 1 = Green, Sheet 2 = Gold)."),
+                 # hr(),
                  h4("Treatments (stepwise profiles)"),
                  helpText("Minimum two rows per treatment (start @ day 0 and a final day). Double-click a cell to edit. Use the bin icon to delete rows (first two rows cannot be deleted)."),
                  selectInput("treat_count", "Number of treatments", choices = c(1,2,3), selected = 1),
